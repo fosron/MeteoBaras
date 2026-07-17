@@ -48,7 +48,8 @@ class StatusBarManager: NSObject, NSMenuDelegate {
             let attr = NSMutableAttributedString()
             let tempAttr: [NSAttributedString.Key: Any] = [
                 .font: NSFont.systemFont(ofSize: 13, weight: .medium),
-                .foregroundColor: NSColor.labelColor
+                .foregroundColor: NSColor.labelColor,
+                .baselineOffset: -1.5
             ]
             attr.append(NSAttributedString(string: tempText, attributes: tempAttr))
             button.attributedTitle = attr
@@ -73,16 +74,10 @@ class StatusBarManager: NSObject, NSMenuDelegate {
         
         // Current conditions
         if let forecasts = forecasts, let current = forecasts.first {
-            addCurrentWeather(to: menu, forecast: current)
+            addCurrentConditions(to: menu, forecast: current, observation: observations)
             menu.addItem(.separator())
         }
-        
-        // Latest observations
-        if let obs = observations {
-            addObservations(to: menu, observation: obs)
-            menu.addItem(.separator())
-        }
-        
+
         // Hourly forecast
         if let forecasts = forecasts {
             addHourlyForecast(to: menu, forecasts: forecasts)
@@ -128,149 +123,165 @@ class StatusBarManager: NSObject, NSMenuDelegate {
         stackView.addArrangedSubview(label)
         stackView.addArrangedSubview(subLabel)
         
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 220, height: 50))
-        container.addSubview(stackView)
-        stackView.translatesAutoresizingMaskIntoConstraints = false
+        return wrapForMenuItem(stackView, width: 220)
+    }
+
+    /// Builds an "[icon] text" row where the icon's bottom sits exactly on
+    /// the text's baseline (via `firstBaselineAnchor`) and its height
+    /// matches the font's cap-height — the region digits actually occupy.
+    /// Sizing the icon to the font's full point size (or centering by frame
+    /// against a stack view) makes it taller than the text and visibly
+    /// shifted upward, since the label's frame includes descender space the
+    /// icon doesn't need.
+    private func iconTextRow(symbol: String, iconColor: NSColor, text: String, font: NSFont, textColor: NSColor, spacing: CGFloat = 6) -> NSView {
+        let container = NSView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+
+        let iconImage = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        iconImage?.isTemplate = true
+        let iconView = NSImageView(image: iconImage ?? NSImage())
+        iconView.imageScaling = .scaleProportionallyUpOrDown
+        iconView.contentTintColor = iconColor
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+
+        let label = NSTextField(labelWithString: text)
+        label.font = font
+        label.textColor = textColor
+        label.isEditable = false
+        label.isBordered = false
+        label.drawsBackground = false
+        label.translatesAutoresizingMaskIntoConstraints = false
+
+        container.addSubview(iconView)
+        container.addSubview(label)
+
+        let capHeight = font.capHeight
+
         NSLayoutConstraint.activate([
-            stackView.topAnchor.constraint(equalTo: container.topAnchor),
-            stackView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            stackView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            stackView.trailingAnchor.constraint(equalTo: container.trailingAnchor)
+            iconView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            iconView.widthAnchor.constraint(equalToConstant: capHeight),
+            iconView.heightAnchor.constraint(equalToConstant: capHeight),
+            iconView.bottomAnchor.constraint(equalTo: label.firstBaselineAnchor),
+
+            label.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: spacing),
+            label.topAnchor.constraint(equalTo: container.topAnchor),
+            label.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            label.trailingAnchor.constraint(equalTo: container.trailingAnchor)
         ])
-        
+
         return container
     }
-    
-    private func addCurrentWeather(to menu: NSMenu, forecast: ForecastTimestamp) {
-        let item = NSMenuItem()
-        
-        let stackView = NSStackView()
-        stackView.orientation = .horizontal
-        stackView.edgeInsets = NSEdgeInsets(top: 8, left: 12, bottom: 8, right: 12)
-        stackView.spacing = 10
-        
-        // Icon
-        let iconView = NSView(frame: NSRect(x: 0, y: 0, width: 32, height: 32))
-        let iconImage = NSImage(systemSymbolName: WeatherConditionIcon.sfSymbol(for: forecast.conditionCode), accessibilityDescription: nil)
-        iconImage?.isTemplate = true
-        let iconImageView = NSImageView(image: iconImage ?? NSImage())
-        iconImageView.imageScaling = .scaleProportionallyUpOrDown
-        iconImageView.translatesAutoresizingMaskIntoConstraints = false
-        iconView.addSubview(iconImageView)
+
+    /// Wraps a view for use as an NSMenuItem's custom view, sizing it to its
+    /// content's intrinsic height instead of a guessed fixed height (a fixed
+    /// guess tends to leave dead space below the content).
+    private func wrapForMenuItem(_ view: NSView, width: CGFloat) -> NSView {
+        let container = NSView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(view)
+        view.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            iconImageView.centerXAnchor.constraint(equalTo: iconView.centerXAnchor),
-            iconImageView.centerYAnchor.constraint(equalTo: iconView.centerYAnchor),
-            iconImageView.widthAnchor.constraint(equalToConstant: 28),
-            iconImageView.heightAnchor.constraint(equalToConstant: 28)
+            view.topAnchor.constraint(equalTo: container.topAnchor),
+            view.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            view.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            container.widthAnchor.constraint(equalToConstant: width)
         ])
-        
-        // Temperature
-        let tempLabel = NSTextField(labelWithString: String(format: "%.0f°C", forecast.airTemperature ?? 0))
-        tempLabel.font = NSFont.systemFont(ofSize: 24, weight: .bold)
-        tempLabel.isEditable = false
-        tempLabel.isBordered = false
-        tempLabel.drawsBackground = false
-        
-        // Details
-        let detailsStack = NSStackView()
-        detailsStack.orientation = .vertical
-        detailsStack.spacing = 2
-        
-        let feelsLike = NSTextField(labelWithString: "Feels like \(String(format: "%.0f", forecast.feelsLikeTemperature ?? forecast.airTemperature ?? 0))°C")
+        return container
+    }
+
+    private func addCurrentConditions(to menu: NSMenu, forecast: ForecastTimestamp, observation: Observation?) {
+        let item = NSMenuItem()
+        let conditionCode = observation?.conditionCode ?? forecast.conditionCode
+
+        let outerStack = NSStackView()
+        outerStack.orientation = .vertical
+        outerStack.edgeInsets = NSEdgeInsets(top: 8, left: 12, bottom: 8, right: 12)
+        outerStack.spacing = 6
+        outerStack.alignment = .leading
+
+        // Row 1: icon + temperature
+        let mainFont = NSFont.systemFont(ofSize: 22, weight: .bold)
+        let mainRow = iconTextRow(
+            symbol: WeatherConditionIcon.sfSymbol(for: conditionCode),
+            iconColor: NSColor.labelColor,
+            text: String(format: "%.0f°C", forecast.airTemperature ?? 0),
+            font: mainFont,
+            textColor: NSColor.labelColor,
+            spacing: 8
+        )
+
+        // Row 2: condition + feels-like
+        let subRow = NSStackView()
+        subRow.orientation = .horizontal
+        subRow.spacing = 6
+        subRow.alignment = .firstBaseline
+
+        let conditionLabel = NSTextField(labelWithString: WeatherConditionIcon.label(for: conditionCode))
+        conditionLabel.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        conditionLabel.textColor = NSColor.labelColor
+        conditionLabel.isEditable = false
+        conditionLabel.isBordered = false
+        conditionLabel.drawsBackground = false
+
+        let feelsLikeValue = observation?.feelsLikeTemperature ?? forecast.feelsLikeTemperature ?? forecast.airTemperature ?? 0
+        let feelsLike = NSTextField(labelWithString: "Feels like \(String(format: "%.0f", feelsLikeValue))°C")
         feelsLike.font = NSFont.systemFont(ofSize: 11)
         feelsLike.textColor = NSColor.secondaryLabelColor
         feelsLike.isEditable = false
         feelsLike.isBordered = false
         feelsLike.drawsBackground = false
-        
-        let conditionLabel = NSTextField(labelWithString: WeatherConditionIcon.label(for: forecast.conditionCode))
-        conditionLabel.font = NSFont.systemFont(ofSize: 11)
-        conditionLabel.textColor = NSColor.secondaryLabelColor
-        conditionLabel.isEditable = false
-        conditionLabel.isBordered = false
-        conditionLabel.drawsBackground = false
-        
-        detailsStack.addArrangedSubview(feelsLike)
-        detailsStack.addArrangedSubview(conditionLabel)
-        
-        let rightStack = NSStackView()
-        rightStack.orientation = .vertical
-        rightStack.alignment = .left
-        rightStack.spacing = 4
-        rightStack.addArrangedSubview(tempLabel)
-        rightStack.addArrangedSubview(detailsStack)
-        
-        // Spacer
-        let spacer = NSView(frame: NSRect(x: 0, y: 0, width: 4, height: 1))
-        spacer.setFrameSize(NSSize(width: 4, height: 1))
-        spacer.translatesAutoresizingMaskIntoConstraints = false
-        spacer.widthAnchor.constraint(equalToConstant: 4).isActive = true
-        
-        stackView.addArrangedSubview(spacer)
-        stackView.addArrangedSubview(iconView)
-        stackView.addArrangedSubview(rightStack)
-        
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 240, height: 80))
-        container.addSubview(stackView)
-        stackView.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            stackView.topAnchor.constraint(equalTo: container.topAnchor),
-            stackView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            stackView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            stackView.trailingAnchor.constraint(equalTo: container.trailingAnchor)
-        ])
-        
-        item.view = container
+
+        subRow.addArrangedSubview(conditionLabel)
+        subRow.addArrangedSubview(feelsLike)
+
+        outerStack.addArrangedSubview(mainRow)
+        outerStack.addArrangedSubview(subRow)
+
+        // Row 3: rest of the conditions
+        let statsRow = NSStackView()
+        statsRow.orientation = .horizontal
+        statsRow.spacing = 12
+        statsRow.alignment = .centerY
+
+        let humidity = observation?.relativeHumidity ?? forecast.relativeHumidity
+        let windSpeed = observation?.windSpeed ?? forecast.windSpeed
+        let pressure = observation?.seaLevelPressure ?? forecast.seaLevelPressure
+        let cloudCover = observation?.cloudCover ?? forecast.cloudCover
+
+        if let humidity {
+            statsRow.addArrangedSubview(statChip(symbol: "humidity.fill", text: "\(humidity)%"))
+        }
+        if let windSpeed {
+            statsRow.addArrangedSubview(statChip(symbol: "wind", text: String(format: "%.0f m/s", windSpeed)))
+        }
+        if let pressure {
+            statsRow.addArrangedSubview(statChip(symbol: "gauge.medium", text: String(format: "%.0f hPa", pressure)))
+        }
+        if let cloudCover {
+            statsRow.addArrangedSubview(statChip(symbol: "cloud.fill", text: "\(cloudCover)%"))
+        }
+
+        if !statsRow.arrangedSubviews.isEmpty {
+            outerStack.addArrangedSubview(statsRow)
+        }
+
+        item.view = wrapForMenuItem(outerStack, width: 250)
         menu.addItem(item)
     }
-    
-    private func addObservations(to menu: NSMenu, observation: Observation) {
-        let titleItem = NSMenuItem(title: "Latest Observations", action: nil, keyEquivalent: "")
-        titleItem.attributedTitle = NSAttributedString(
-            string: "Latest Observations",
-            attributes: [
-                .font: NSFont.systemFont(ofSize: 12, weight: .semibold),
-                .foregroundColor: NSColor.secondaryLabelColor
-            ]
+
+    private func statChip(symbol: String, text: String) -> NSView {
+        iconTextRow(
+            symbol: symbol,
+            iconColor: NSColor.secondaryLabelColor,
+            text: text,
+            font: NSFont.systemFont(ofSize: 11, weight: .medium),
+            textColor: NSColor.labelColor,
+            spacing: 4
         )
-        menu.addItem(titleItem)
-        
-        let details: [(String, String)] = [
-            ("Temperature", observation.airTemperature.map { String(format: "%.1f°C", $0) } ?? "—"),
-            ("Feels Like", observation.feelsLikeTemperature.map { String(format: "%.1f°C", $0) } ?? "—"),
-            ("Humidity", observation.relativeHumidity.map { "\($0)%" } ?? "—"),
-            ("Pressure", observation.seaLevelPressure.map { String(format: "%.1f hPa", $0) } ?? "—"),
-            ("Wind", observation.windSpeed.map { String(format: "%.1f m/s", $0) } ?? "—"),
-            ("Wind Gust", observation.windGust.map { String(format: "%.1f m/s", $0) } ?? "—"),
-            ("Cloud Cover", observation.cloudCover.map { "\($0)%" } ?? "—"),
-            ("Precipitation", observation.precipitation.map { String(format: "%.1f mm", $0) } ?? "—"),
-        ]
-        
-        for (label, value) in details {
-            let item = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-            let attr = NSMutableAttributedString()
-            
-            attr.append(NSAttributedString(
-                string: label,
-                attributes: [
-                    .font: NSFont.systemFont(ofSize: 12),
-                    .foregroundColor: NSColor.secondaryLabelColor
-                ]
-            ))
-            attr.append(NSAttributedString(string: "  "))
-            attr.append(NSAttributedString(
-                string: value,
-                attributes: [
-                    .font: NSFont.systemFont(ofSize: 12, weight: .medium),
-                    .foregroundColor: NSColor.labelColor
-                ]
-            ))
-            
-            item.attributedTitle = attr
-            menu.addItem(item)
-        }
     }
-    
+
+
     private func addHourlyForecast(to menu: NSMenu, forecasts: [ForecastTimestamp]) {
         let titleItem = NSMenuItem(title: "Hourly Forecast", action: nil, keyEquivalent: "")
         titleItem.attributedTitle = NSAttributedString(
@@ -282,54 +293,88 @@ class StatusBarManager: NSObject, NSMenuDelegate {
         )
         menu.addItem(titleItem)
         
-        let items = Array(forecasts.prefix(12))
-        
-        for forecast in items {
-            let item = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-            
-            let stackView = NSStackView()
-            stackView.orientation = .horizontal
-            stackView.edgeInsets = NSEdgeInsets(top: 4, left: 12, bottom: 4, right: 12)
-            stackView.spacing = 8
-            
-            let timeLabel = NSTextField(labelWithString: formatTime(forecast.forecastTimeUtc))
-            timeLabel.font = NSFont.systemFont(ofSize: 11)
-            timeLabel.textColor = NSColor.secondaryLabelColor
-            timeLabel.isEditable = false
-            timeLabel.isBordered = false
-            timeLabel.drawsBackground = false
-            timeLabel.frame = NSRect(x: 0, y: 0, width: 50, height: 16)
-            
-            let iconImage = NSImage(systemSymbolName: WeatherConditionIcon.sfSymbol(for: forecast.conditionCode), accessibilityDescription: nil)
-            iconImage?.isTemplate = true
-            let iconView = NSImageView(image: iconImage ?? NSImage())
-            iconView.imageScaling = .scaleProportionallyUpOrDown
-            iconView.frame = NSRect(x: 0, y: 0, width: 18, height: 18)
-            
-            let tempLabel = NSTextField(labelWithString: forecast.airTemperature.map { String(format: "%.0f°", $0) } ?? "—")
-            tempLabel.font = NSFont.systemFont(ofSize: 12, weight: .medium)
-            tempLabel.isEditable = false
-            tempLabel.isBordered = false
-            tempLabel.drawsBackground = false
-            tempLabel.frame = NSRect(x: 0, y: 0, width: 40, height: 16)
-            
-            stackView.addArrangedSubview(timeLabel)
-            stackView.addArrangedSubview(iconView)
-            stackView.addArrangedSubview(tempLabel)
-            
-            let container = NSView(frame: NSRect(x: 0, y: 0, width: 240, height: 28))
-            container.addSubview(stackView)
-            stackView.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([
-                stackView.topAnchor.constraint(equalTo: container.topAnchor),
-                stackView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-                stackView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-                stackView.trailingAnchor.constraint(equalTo: container.trailingAnchor)
-            ])
-            
-            item.view = container
-            menu.addItem(item)
+        let items = Array(forecasts.prefix(8))
+        guard !items.isEmpty else { return }
+
+        let gridStack = NSStackView()
+        gridStack.orientation = .vertical
+        gridStack.edgeInsets = NSEdgeInsets(top: 4, left: 12, bottom: 6, right: 12)
+        gridStack.spacing = 8
+
+        for rowStart in stride(from: 0, to: items.count, by: 2) {
+            let rowStack = NSStackView()
+            rowStack.orientation = .horizontal
+            rowStack.spacing = 16
+            rowStack.distribution = .fillEqually
+
+            rowStack.addArrangedSubview(hourCardView(forecast: items[rowStart]))
+            if rowStart + 1 < items.count {
+                rowStack.addArrangedSubview(hourCardView(forecast: items[rowStart + 1]))
+            } else {
+                rowStack.addArrangedSubview(NSView())
+            }
+
+            gridStack.addArrangedSubview(rowStack)
         }
+
+        let item = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        item.view = wrapForMenuItem(gridStack, width: 240)
+        menu.addItem(item)
+    }
+
+    private func hourCardView(forecast: ForecastTimestamp) -> NSView {
+        let container = NSView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+
+        let timeLabel = NSTextField(labelWithString: formatTime(forecast.forecastTimeUtc))
+        timeLabel.font = NSFont.systemFont(ofSize: 11)
+        timeLabel.textColor = NSColor.secondaryLabelColor
+        timeLabel.isEditable = false
+        timeLabel.isBordered = false
+        timeLabel.drawsBackground = false
+        timeLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let iconImage = NSImage(systemSymbolName: WeatherConditionIcon.sfSymbol(for: forecast.conditionCode), accessibilityDescription: nil)
+        iconImage?.isTemplate = true
+        let iconView = NSImageView(image: iconImage ?? NSImage())
+        iconView.imageScaling = .scaleProportionallyUpOrDown
+        iconView.contentTintColor = NSColor.labelColor
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+
+        let tempFont = NSFont.systemFont(ofSize: 12, weight: .medium)
+        let tempLabel = NSTextField(labelWithString: forecast.airTemperature.map { String(format: "%.0f°", $0) } ?? "—")
+        tempLabel.font = tempFont
+        tempLabel.isEditable = false
+        tempLabel.isBordered = false
+        tempLabel.drawsBackground = false
+        tempLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        container.addSubview(timeLabel)
+        container.addSubview(iconView)
+        container.addSubview(tempLabel)
+
+        let capHeight = tempFont.capHeight
+
+        // Tie the time label's baseline directly to the temperature label's
+        // baseline (works across the two different font sizes), and size
+        // the icon's height to the temp font's cap-height with its bottom
+        // pinned to that same shared baseline.
+        NSLayoutConstraint.activate([
+            timeLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            timeLabel.firstBaselineAnchor.constraint(equalTo: tempLabel.firstBaselineAnchor),
+
+            iconView.leadingAnchor.constraint(equalTo: timeLabel.trailingAnchor, constant: 6),
+            iconView.widthAnchor.constraint(equalToConstant: capHeight),
+            iconView.heightAnchor.constraint(equalToConstant: capHeight),
+            iconView.bottomAnchor.constraint(equalTo: tempLabel.firstBaselineAnchor),
+
+            tempLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 4),
+            tempLabel.topAnchor.constraint(equalTo: container.topAnchor),
+            tempLabel.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            tempLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor)
+        ])
+
+        return container
     }
     
     // MARK: - Data Fetching

@@ -6,18 +6,16 @@ class LocationUpdater: NSObject, CLLocationManagerDelegate {
     
     private let manager = CLLocationManager()
     nonisolated(unsafe) private var callback: (@Sendable (Place) -> Void)?
-    
+
+    override init() {
+        super.init()
+        manager.delegate = self
+    }
+
     /// Start location resolution. Calls the callback once with the nearest place.
     func start(_ completion: @Sendable @escaping (Place) -> Void) {
         callback = completion
-        
-        // Set usage description programmatically before requesting authorization.
-        // This is needed because SPM doesn't bundle Info.plist.
-        if var info = Bundle.main.infoDictionary {
-            info["NSLocationWhenInUseUsageDescription"] =
-                "MeteoBaras needs your location to show weather for your area."
-        }
-        
+
         // Request authorization — if the user grants it, we'll get their location.
         // If denied, we silently keep the default (Vilnius).
         manager.requestWhenInUseAuthorization()
@@ -35,15 +33,15 @@ class LocationUpdater: NSObject, CLLocationManagerDelegate {
             break
         }
     }
-    
+
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let location = locations.last else { return }
         manager.stopUpdatingLocation()
-        
+
         let latitude = location.coordinate.latitude
         let longitude = location.coordinate.longitude
         let callback = self.callback // Capture before Task
-        
+
         Task {
             do {
                 let coordinates = Coordinates(latitude: latitude, longitude: longitude)
@@ -55,7 +53,7 @@ class LocationUpdater: NSObject, CLLocationManagerDelegate {
             }
         }
     }
-    
+
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         _ = error
     }

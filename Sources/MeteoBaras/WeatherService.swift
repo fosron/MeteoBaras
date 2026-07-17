@@ -1,8 +1,7 @@
 import Foundation
 
 /// Fetches weather data from the meteo.lt API.
-@MainActor
-class WeatherService {
+final class WeatherService: @unchecked Sendable {
     
     static let shared = WeatherService()
     private let baseURL = "https://api.meteo.lt/v1"
