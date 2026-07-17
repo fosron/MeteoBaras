@@ -126,16 +126,12 @@ class StatusBarManager: NSObject, NSMenuDelegate {
         return wrapForMenuItem(stackView, width: 220)
     }
 
-    /// Builds an "[icon] text" row where the icon's bottom sits exactly on
-    /// the text's baseline (via `firstBaselineAnchor`) and its height
-    /// matches the font's cap-height — the region digits actually occupy.
-    /// Sizing the icon to the font's full point size (or centering by frame
-    /// against a stack view) makes it taller than the text and visibly
-    /// shifted upward, since the label's frame includes descender space the
-    /// icon doesn't need.
-    private func iconTextRow(symbol: String, iconColor: NSColor, text: String, font: NSFont, textColor: NSColor, spacing: CGFloat = 6) -> NSView {
-        let container = NSView()
-        container.translatesAutoresizingMaskIntoConstraints = false
+    /// Builds an "[icon] text" row: a plain horizontal stack, centered.
+    private func iconTextRow(symbol: String, iconColor: NSColor, text: String, font: NSFont, textColor: NSColor, iconSize: CGFloat, spacing: CGFloat = 6) -> NSView {
+        let stack = NSStackView()
+        stack.orientation = .horizontal
+        stack.alignment = .centerY
+        stack.spacing = spacing
 
         let iconImage = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
         iconImage?.isTemplate = true
@@ -143,6 +139,10 @@ class StatusBarManager: NSObject, NSMenuDelegate {
         iconView.imageScaling = .scaleProportionallyUpOrDown
         iconView.contentTintColor = iconColor
         iconView.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            iconView.widthAnchor.constraint(equalToConstant: iconSize),
+            iconView.heightAnchor.constraint(equalToConstant: iconSize)
+        ])
 
         let label = NSTextField(labelWithString: text)
         label.font = font
@@ -150,26 +150,11 @@ class StatusBarManager: NSObject, NSMenuDelegate {
         label.isEditable = false
         label.isBordered = false
         label.drawsBackground = false
-        label.translatesAutoresizingMaskIntoConstraints = false
 
-        container.addSubview(iconView)
-        container.addSubview(label)
+        stack.addArrangedSubview(iconView)
+        stack.addArrangedSubview(label)
 
-        let capHeight = font.capHeight
-
-        NSLayoutConstraint.activate([
-            iconView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            iconView.widthAnchor.constraint(equalToConstant: capHeight),
-            iconView.heightAnchor.constraint(equalToConstant: capHeight),
-            iconView.bottomAnchor.constraint(equalTo: label.firstBaselineAnchor),
-
-            label.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: spacing),
-            label.topAnchor.constraint(equalTo: container.topAnchor),
-            label.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            label.trailingAnchor.constraint(equalTo: container.trailingAnchor)
-        ])
-
-        return container
+        return stack
     }
 
     /// Wraps a view for use as an NSMenuItem's custom view, sizing it to its
@@ -187,6 +172,10 @@ class StatusBarManager: NSObject, NSMenuDelegate {
             view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             container.widthAnchor.constraint(equalToConstant: width)
         ])
+        // Force layout to settle now, before NSMenu displays the view —
+        // otherwise the stack views inside can visibly jump into place on
+        // the first frame each time the menu opens.
+        container.layoutSubtreeIfNeeded()
         return container
     }
 
@@ -198,7 +187,7 @@ class StatusBarManager: NSObject, NSMenuDelegate {
         outerStack.orientation = .vertical
         outerStack.edgeInsets = NSEdgeInsets(top: 8, left: 12, bottom: 8, right: 12)
         outerStack.spacing = 6
-        outerStack.alignment = .leading
+        outerStack.alignment = .centerX
 
         // Row 1: icon + temperature
         let mainFont = NSFont.systemFont(ofSize: 22, weight: .bold)
@@ -208,6 +197,7 @@ class StatusBarManager: NSObject, NSMenuDelegate {
             text: String(format: "%.0f°C", forecast.airTemperature ?? 0),
             font: mainFont,
             textColor: NSColor.labelColor,
+            iconSize: 22,
             spacing: 8
         )
 
@@ -277,22 +267,13 @@ class StatusBarManager: NSObject, NSMenuDelegate {
             text: text,
             font: NSFont.systemFont(ofSize: 11, weight: .medium),
             textColor: NSColor.labelColor,
+            iconSize: 13,
             spacing: 4
         )
     }
 
 
     private func addHourlyForecast(to menu: NSMenu, forecasts: [ForecastTimestamp]) {
-        let titleItem = NSMenuItem(title: "Hourly Forecast", action: nil, keyEquivalent: "")
-        titleItem.attributedTitle = NSAttributedString(
-            string: "Hourly Forecast",
-            attributes: [
-                .font: NSFont.systemFont(ofSize: 12, weight: .semibold),
-                .foregroundColor: NSColor.secondaryLabelColor
-            ]
-        )
-        menu.addItem(titleItem)
-        
         let items = Array(forecasts.prefix(8))
         guard !items.isEmpty else { return }
 
@@ -323,8 +304,10 @@ class StatusBarManager: NSObject, NSMenuDelegate {
     }
 
     private func hourCardView(forecast: ForecastTimestamp) -> NSView {
-        let container = NSView()
-        container.translatesAutoresizingMaskIntoConstraints = false
+        let stack = NSStackView()
+        stack.orientation = .horizontal
+        stack.alignment = .centerY
+        stack.spacing = 6
 
         let timeLabel = NSTextField(labelWithString: formatTime(forecast.forecastTimeUtc))
         timeLabel.font = NSFont.systemFont(ofSize: 11)
@@ -332,49 +315,21 @@ class StatusBarManager: NSObject, NSMenuDelegate {
         timeLabel.isEditable = false
         timeLabel.isBordered = false
         timeLabel.drawsBackground = false
-        timeLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        let iconImage = NSImage(systemSymbolName: WeatherConditionIcon.sfSymbol(for: forecast.conditionCode), accessibilityDescription: nil)
-        iconImage?.isTemplate = true
-        let iconView = NSImageView(image: iconImage ?? NSImage())
-        iconView.imageScaling = .scaleProportionallyUpOrDown
-        iconView.contentTintColor = NSColor.labelColor
-        iconView.translatesAutoresizingMaskIntoConstraints = false
+        let tempRow = iconTextRow(
+            symbol: WeatherConditionIcon.sfSymbol(for: forecast.conditionCode),
+            iconColor: NSColor.labelColor,
+            text: forecast.airTemperature.map { String(format: "%.0f°", $0) } ?? "—",
+            font: NSFont.systemFont(ofSize: 12, weight: .medium),
+            textColor: NSColor.labelColor,
+            iconSize: 16,
+            spacing: 4
+        )
 
-        let tempFont = NSFont.systemFont(ofSize: 12, weight: .medium)
-        let tempLabel = NSTextField(labelWithString: forecast.airTemperature.map { String(format: "%.0f°", $0) } ?? "—")
-        tempLabel.font = tempFont
-        tempLabel.isEditable = false
-        tempLabel.isBordered = false
-        tempLabel.drawsBackground = false
-        tempLabel.translatesAutoresizingMaskIntoConstraints = false
+        stack.addArrangedSubview(timeLabel)
+        stack.addArrangedSubview(tempRow)
 
-        container.addSubview(timeLabel)
-        container.addSubview(iconView)
-        container.addSubview(tempLabel)
-
-        let capHeight = tempFont.capHeight
-
-        // Tie the time label's baseline directly to the temperature label's
-        // baseline (works across the two different font sizes), and size
-        // the icon's height to the temp font's cap-height with its bottom
-        // pinned to that same shared baseline.
-        NSLayoutConstraint.activate([
-            timeLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            timeLabel.firstBaselineAnchor.constraint(equalTo: tempLabel.firstBaselineAnchor),
-
-            iconView.leadingAnchor.constraint(equalTo: timeLabel.trailingAnchor, constant: 6),
-            iconView.widthAnchor.constraint(equalToConstant: capHeight),
-            iconView.heightAnchor.constraint(equalToConstant: capHeight),
-            iconView.bottomAnchor.constraint(equalTo: tempLabel.firstBaselineAnchor),
-
-            tempLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 4),
-            tempLabel.topAnchor.constraint(equalTo: container.topAnchor),
-            tempLabel.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            tempLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor)
-        ])
-
-        return container
+        return stack
     }
     
     // MARK: - Data Fetching
