@@ -20,10 +20,13 @@ A macOS menu bar weather app that displays the current temperature in Celsius us
 
 Grab the latest build from the [Releases page](https://github.com/fosron/MeteoBaras/releases) — download the `.zip`, unzip it, and move `MeteoBaras.app` to your Applications folder.
 
-This build is signed with an ad-hoc (self) signature rather than a paid Apple Developer ID, so macOS Gatekeeper will flag it as being from an "unidentified developer." To run it:
+This build is signed with an ad-hoc (self) signature rather than a paid Apple Developer ID, so Gatekeeper blocks it on first launch with a "could not verify" warning. The most reliable fix is to clear the quarantine flag from Terminal:
 
-1. Right-click (or Control-click) `MeteoBaras.app` and choose **Open**
-2. Click **Open** again in the dialog that appears
+```bash
+xattr -cr /Applications/MeteoBaras.app
+```
+
+Alternatively, go to **System Settings → Privacy & Security**, scroll down, and click **Open Anyway** next to MeteoBaras (try opening the app once first so the entry appears there).
 
 You only need to do this once — after that it launches normally like any other app.
 
