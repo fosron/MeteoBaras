@@ -14,7 +14,7 @@ A macOS menu bar weather app that displays the current temperature in Celsius us
   - 8-hour forecast grid with temperatures and conditions
   - A link to open the full forecast on meteo.lt
 - **Auto location** - Automatically detects your location and finds the nearest weather place
-- **Refresh** - Weather data refreshes each time you open the menu, or on demand via the Refresh item
+- **Auto refresh** - Weather data refreshes automatically every 15 minutes, or on demand via the Refresh item
 
 ## Download
 

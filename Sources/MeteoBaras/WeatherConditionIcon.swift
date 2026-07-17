@@ -66,8 +66,7 @@ enum WeatherConditionIcon {
     
     static func label(for conditionCode: String?) -> String {
         guard let code = conditionCode else { return "Unknown" }
-        
-        // Return a human-readable label by replacing hyphens with spaces and capitalizing.
+
         let words = code.split(separator: "-").map { String($0) }
         let formatted = words.enumerated().map { index, word in
             index == 0 ? word.capitalized : word.lowercased()

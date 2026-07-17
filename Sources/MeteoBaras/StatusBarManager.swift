@@ -11,20 +11,29 @@ class StatusBarManager: NSObject, NSMenuDelegate {
     private var currentPlaceName: String = ""
     private var isMenuOpen = false
     private var pendingMenuRebuild: (() -> Void)?
+    private static let autoRefreshInterval: Duration = .seconds(15 * 60)
 
     override init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
 
-        // Assign the menu once so clicking the button shows it immediately.
-        // macOS auto-shows the assigned menu on click — no manual toggle needed.
-        // buildMenu() repopulates this same instance's items rather than
-        // swapping in a new NSMenu — replacing the whole object while it's
-        // already open/visible causes a visible layout jump.
+        // buildMenu() repopulates this same menu's items rather than
+        // swapping in a new NSMenu, since replacing it while open causes a
+        // visible layout jump.
         menu.delegate = self
         statusItem.menu = menu
 
         updateStatusBarText(icon: "questionmark.circle", temperature: nil)
+        startAutoRefresh()
+    }
+
+    private func startAutoRefresh() {
+        Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: Self.autoRefreshInterval)
+                await updateWeather()
+            }
+        }
     }
     
     // MARK: - Public
@@ -164,9 +173,8 @@ class StatusBarManager: NSObject, NSMenuDelegate {
         return stack
     }
 
-    /// Wraps a view for use as an NSMenuItem's custom view, sizing it to its
-    /// content's intrinsic height instead of a guessed fixed height (a fixed
-    /// guess tends to leave dead space below the content).
+    /// Wraps a view for use as an NSMenuItem's custom view, sized to its
+    /// content's intrinsic height.
     private func wrapForMenuItem(_ view: NSView, width: CGFloat) -> NSView {
         let container = NSView()
         container.translatesAutoresizingMaskIntoConstraints = false
@@ -179,9 +187,8 @@ class StatusBarManager: NSObject, NSMenuDelegate {
             view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             container.widthAnchor.constraint(equalToConstant: width)
         ])
-        // Force layout to settle now, before NSMenu displays the view —
-        // otherwise the stack views inside can visibly jump into place on
-        // the first frame each time the menu opens.
+        // Settle layout before NSMenu displays the view, or its stack views
+        // visibly jump into place on the first frame.
         container.layoutSubtreeIfNeeded()
         return container
     }
@@ -366,8 +373,7 @@ class StatusBarManager: NSObject, NSMenuDelegate {
             }
 
             // Mutating the menu's items while it's open causes a visible
-            // layout glitch (NSMenu's tracking window doesn't reliably
-            // resize). Defer the rebuild until the menu closes.
+            // layout glitch, so defer until it closes.
             if isMenuOpen {
                 pendingMenuRebuild = rebuild
             } else {
@@ -414,9 +420,6 @@ class StatusBarManager: NSObject, NSMenuDelegate {
     
     func menuWillOpen(_ menu: NSMenu) {
         isMenuOpen = true
-        Task {
-            await updateWeather()
-        }
     }
 
     func menuDidClose(_ menu: NSMenu) {
