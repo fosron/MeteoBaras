@@ -5,20 +5,25 @@ import AppKit
 class StatusBarManager: NSObject, NSMenuDelegate {
     
     private let statusItem: NSStatusItem
+    private let menu = NSMenu()
     private let weatherService = WeatherService.shared
     private var currentPlaceCode: String?
     private var currentPlaceName: String = ""
-    
+    private var isMenuOpen = false
+    private var pendingMenuRebuild: (() -> Void)?
+
     override init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
-        
-        // Assign an empty menu so clicking the button shows a menu immediately.
+
+        // Assign the menu once so clicking the button shows it immediately.
         // macOS auto-shows the assigned menu on click — no manual toggle needed.
-        let menu = NSMenu()
+        // buildMenu() repopulates this same instance's items rather than
+        // swapping in a new NSMenu — replacing the whole object while it's
+        // already open/visible causes a visible layout jump.
         menu.delegate = self
         statusItem.menu = menu
-        
+
         updateStatusBarText(icon: "questionmark.circle", temperature: nil)
     }
     
@@ -62,9 +67,8 @@ class StatusBarManager: NSObject, NSMenuDelegate {
     // MARK: - Menu
     
     func buildMenu(placeName: String, forecasts: [ForecastTimestamp]?, observations: Observation?) {
-        let menu = NSMenu()
-        menu.delegate = self
-        
+        menu.removeAllItems()
+
         // Header
         let headerItem = NSMenuItem()
         headerItem.view = placeHeaderView(placeName: placeName)
@@ -84,6 +88,11 @@ class StatusBarManager: NSObject, NSMenuDelegate {
             menu.addItem(.separator())
         }
         
+        // Open in meteo.lt
+        let openInBrowserItem = NSMenuItem(title: "Open in meteo.lt", action: #selector(openInBrowser), keyEquivalent: "")
+        openInBrowserItem.target = self
+        menu.addItem(openInBrowserItem)
+
         // Refresh
         let refreshItem = NSMenuItem(title: "Refresh", action: #selector(refreshWeather), keyEquivalent: "r")
         refreshItem.target = self
@@ -94,8 +103,6 @@ class StatusBarManager: NSObject, NSMenuDelegate {
         // Quit
         let quitItem = NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate), keyEquivalent: "q")
         menu.addItem(quitItem)
-        
-        statusItem.menu = menu
     }
     
     // MARK: - Menu Components
@@ -286,7 +293,7 @@ class StatusBarManager: NSObject, NSMenuDelegate {
             let rowStack = NSStackView()
             rowStack.orientation = .horizontal
             rowStack.spacing = 16
-            rowStack.distribution = .fillEqually
+            rowStack.distribution = .equalCentering
 
             rowStack.addArrangedSubview(hourCardView(forecast: items[rowStart]))
             if rowStart + 1 < items.count {
@@ -349,13 +356,24 @@ class StatusBarManager: NSObject, NSMenuDelegate {
             if let obs = try? await fetchObservation(for: placeCode) {
                 observation = obs
             }
-            
-            buildMenu(
-                placeName: forecast.place.name,
-                forecasts: forecast.forecastTimestamps,
-                observations: observation
-            )
-            
+
+            let rebuild: () -> Void = { [weak self] in
+                self?.buildMenu(
+                    placeName: forecast.place.name,
+                    forecasts: forecast.forecastTimestamps,
+                    observations: observation
+                )
+            }
+
+            // Mutating the menu's items while it's open causes a visible
+            // layout glitch (NSMenu's tracking window doesn't reliably
+            // resize). Defer the rebuild until the menu closes.
+            if isMenuOpen {
+                pendingMenuRebuild = rebuild
+            } else {
+                rebuild()
+            }
+
         } catch {
             updateStatusBarText(icon: "exclamationmark.triangle.fill", temperature: nil)
         }
@@ -385,12 +403,27 @@ class StatusBarManager: NSObject, NSMenuDelegate {
             await updateWeather()
         }
     }
+
+    @objc private func openInBrowser() {
+        guard let placeCode = currentPlaceCode,
+              let url = URL(string: "https://www.meteo.lt/prognozes/lietuvos-miestai/?area=\(placeCode)") else { return }
+        NSWorkspace.shared.open(url)
+    }
     
     // MARK: - NSMenuDelegate
     
     func menuWillOpen(_ menu: NSMenu) {
+        isMenuOpen = true
         Task {
             await updateWeather()
+        }
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        isMenuOpen = false
+        if let pending = pendingMenuRebuild {
+            pendingMenuRebuild = nil
+            pending()
         }
     }
     
