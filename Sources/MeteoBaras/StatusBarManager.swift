@@ -1,4 +1,5 @@
 import AppKit
+import ServiceManagement
 
 /// Manages the status bar item and its menu.
 @MainActor
@@ -100,22 +101,39 @@ class StatusBarManager: NSObject, NSMenuDelegate {
         // Open in meteo.lt
         let openInBrowserItem = NSMenuItem(title: "Open in meteo.lt", action: #selector(openInBrowser), keyEquivalent: "")
         openInBrowserItem.target = self
+        openInBrowserItem.image = menuItemIcon("safari")
         menu.addItem(openInBrowserItem)
 
         // Refresh
         let refreshItem = NSMenuItem(title: "Refresh", action: #selector(refreshWeather), keyEquivalent: "r")
         refreshItem.target = self
+        refreshItem.image = menuItemIcon("arrow.clockwise")
         menu.addItem(refreshItem)
-        
+
         menu.addItem(.separator())
-        
+
+        // Launch at Login
+        let launchAtLoginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin(_:)), keyEquivalent: "")
+        launchAtLoginItem.target = self
+        launchAtLoginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        launchAtLoginItem.image = menuItemIcon("power")
+        menu.addItem(launchAtLoginItem)
+
+        menu.addItem(.separator())
+
         // Quit
         let quitItem = NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate), keyEquivalent: "q")
         menu.addItem(quitItem)
     }
     
     // MARK: - Menu Components
-    
+
+    private func menuItemIcon(_ symbol: String) -> NSImage? {
+        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        image?.isTemplate = true
+        return image
+    }
+
     private func placeHeaderView(placeName: String) -> NSView {
         let stackView = NSStackView()
         stackView.orientation = .vertical
@@ -242,32 +260,48 @@ class StatusBarManager: NSObject, NSMenuDelegate {
         outerStack.addArrangedSubview(mainRow)
         outerStack.addArrangedSubview(subRow)
 
-        // Row 3: rest of the conditions
-        let statsRow = NSStackView()
-        statsRow.orientation = .horizontal
-        statsRow.spacing = 12
-        statsRow.alignment = .centerY
-
+        // Row 3: rest of the conditions, two chips per row
         let humidity = observation?.relativeHumidity ?? forecast.relativeHumidity
         let windSpeed = observation?.windSpeed ?? forecast.windSpeed
         let pressure = observation?.seaLevelPressure ?? forecast.seaLevelPressure
         let cloudCover = observation?.cloudCover ?? forecast.cloudCover
 
+        var statChips: [NSView] = []
         if let humidity {
-            statsRow.addArrangedSubview(statChip(symbol: "humidity.fill", text: "\(humidity)%"))
+            statChips.append(statChip(symbol: "humidity.fill", text: "\(humidity)%"))
         }
         if let windSpeed {
-            statsRow.addArrangedSubview(statChip(symbol: "wind", text: String(format: "%.0f m/s", windSpeed)))
+            statChips.append(statChip(symbol: "wind", text: String(format: "%.0f m/s", windSpeed)))
         }
         if let pressure {
-            statsRow.addArrangedSubview(statChip(symbol: "gauge.medium", text: String(format: "%.0f hPa", pressure)))
+            statChips.append(statChip(symbol: "gauge.medium", text: String(format: "%.0f hPa", pressure)))
         }
         if let cloudCover {
-            statsRow.addArrangedSubview(statChip(symbol: "cloud.fill", text: "\(cloudCover)%"))
+            statChips.append(statChip(symbol: "cloud.fill", text: "\(cloudCover)%"))
         }
 
-        if !statsRow.arrangedSubviews.isEmpty {
-            outerStack.addArrangedSubview(statsRow)
+        if !statChips.isEmpty {
+            let statsGrid = NSStackView()
+            statsGrid.orientation = .vertical
+            statsGrid.spacing = 6
+
+            for rowStart in stride(from: 0, to: statChips.count, by: 2) {
+                let rowStack = NSStackView()
+                rowStack.orientation = .horizontal
+                rowStack.spacing = 20
+                rowStack.distribution = .equalCentering
+
+                rowStack.addArrangedSubview(statChips[rowStart])
+                if rowStart + 1 < statChips.count {
+                    rowStack.addArrangedSubview(statChips[rowStart + 1])
+                } else {
+                    rowStack.addArrangedSubview(NSView())
+                }
+
+                statsGrid.addArrangedSubview(rowStack)
+            }
+
+            outerStack.addArrangedSubview(statsGrid)
         }
 
         item.view = wrapForMenuItem(outerStack, width: 250)
@@ -415,7 +449,21 @@ class StatusBarManager: NSObject, NSMenuDelegate {
               let url = URL(string: "https://www.meteo.lt/prognozes/lietuvos-miestai/?area=\(placeCode)") else { return }
         NSWorkspace.shared.open(url)
     }
-    
+
+    @objc private func toggleLaunchAtLogin(_ sender: NSMenuItem) {
+        do {
+            if SMAppService.mainApp.status == .enabled {
+                try SMAppService.mainApp.unregister()
+            } else {
+                try SMAppService.mainApp.register()
+            }
+        } catch {
+            // Fall through — the item's state below reflects whatever the
+            // actual status ended up being.
+        }
+        sender.state = SMAppService.mainApp.status == .enabled ? .on : .off
+    }
+
     // MARK: - NSMenuDelegate
     
     func menuWillOpen(_ menu: NSMenu) {
