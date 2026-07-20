@@ -13,6 +13,10 @@ class StatusBarManager: NSObject, NSMenuDelegate {
     private var isMenuOpen = false
     private var pendingMenuRebuild: (() -> Void)?
     private static let autoRefreshInterval: Duration = .seconds(15 * 60)
+    // SMAppService's status check goes over XPC and can be slow, especially
+    // for ad-hoc-signed builds, so it's read once in the background instead
+    // of synchronously on every menu rebuild.
+    private var launchAtLoginEnabled = false
 
     override init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -26,6 +30,17 @@ class StatusBarManager: NSObject, NSMenuDelegate {
 
         updateStatusBarText(icon: "questionmark.circle", temperature: nil)
         startAutoRefresh()
+        refreshLaunchAtLoginStatus()
+    }
+
+    private func refreshLaunchAtLoginStatus() {
+        Task {
+            launchAtLoginEnabled = await Self.readLaunchAtLoginStatus()
+        }
+    }
+
+    private nonisolated static func readLaunchAtLoginStatus() async -> Bool {
+        SMAppService.mainApp.status == .enabled
     }
 
     private func startAutoRefresh() {
@@ -115,7 +130,7 @@ class StatusBarManager: NSObject, NSMenuDelegate {
         // Launch at Login
         let launchAtLoginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin(_:)), keyEquivalent: "")
         launchAtLoginItem.target = self
-        launchAtLoginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        launchAtLoginItem.state = launchAtLoginEnabled ? .on : .off
         launchAtLoginItem.image = menuItemIcon("power")
         menu.addItem(launchAtLoginItem)
 
@@ -451,17 +466,26 @@ class StatusBarManager: NSObject, NSMenuDelegate {
     }
 
     @objc private func toggleLaunchAtLogin(_ sender: NSMenuItem) {
+        let wasEnabled = launchAtLoginEnabled
+        Task {
+            let enabled = await Self.applyLaunchAtLoginToggle(disable: wasEnabled)
+            launchAtLoginEnabled = enabled
+            sender.state = enabled ? .on : .off
+        }
+    }
+
+    private nonisolated static func applyLaunchAtLoginToggle(disable: Bool) async -> Bool {
         do {
-            if SMAppService.mainApp.status == .enabled {
-                try SMAppService.mainApp.unregister()
+            if disable {
+                try await SMAppService.mainApp.unregister()
             } else {
                 try SMAppService.mainApp.register()
             }
         } catch {
-            // Fall through — the item's state below reflects whatever the
+            // Ignore — the returned status below reflects whatever the
             // actual status ended up being.
         }
-        sender.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        return SMAppService.mainApp.status == .enabled
     }
 
     // MARK: - NSMenuDelegate
